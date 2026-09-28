@@ -6,14 +6,20 @@ const jwt = require("jsonwebtoken");
 const bcrypt = require("bcryptjs");
 
 const app = express();
+app.set("trust proxy", 1);
 app.use(express.json({ limit: "100kb" }));
 app.use(express.static(path.join(__dirname, "public")));
 
 const PORT = Number(process.env.PORT || 3000);
-const BASE_URL = (process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
 const JWT_SECRET = process.env.JWT_SECRET || "CHANGE_ME_IN_PRODUCTION";
 const ADMIN_USERNAME = process.env.ADMIN_USERNAME || "admin";
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || "admin123";
+
+function getBaseUrl(req) {
+  const protocol = req.headers["x-forwarded-proto"] || req.protocol;
+  const host = req.get("host");
+  return `${protocol.split(",")[0].trim()}://${host}`.replace(/\/+$/, "");
+}
 
 const db = new Database(path.join(__dirname, "quiz-hunt.db"));
 db.pragma("journal_mode = WAL");
@@ -294,27 +300,33 @@ app.post("/api/admin/reset", requireAdmin, (req,res) => {
   db.prepare("DELETE FROM contestants").run();
   res.json({ok:true});
 });
+
 app.get("/api/admin/qr/:number.png", requireAdmin, async (req,res) => {
   const n = Number(req.params.number);
   if (!Number.isInteger(n)||n<1||n>10) return res.status(400).end();
-  const url = `${BASE_URL}/?qr=${n}`;
+  const url = `${getBaseUrl(req)}/?qr=${n}`;
   res.type("png");
   try { const buffer = await QRCode.toBuffer(url,{width:700,margin:2}); res.send(buffer); }
   catch { res.status(500).end(); }
 });
+
 app.get("/api/admin/start-qr.png", requireAdmin, async (req,res) => {
-  const url = `${BASE_URL}/?start=1`;
+  const url = `${getBaseUrl(req)}/?start=1`;
   res.type("png");
   try { const buffer = await QRCode.toBuffer(url,{width:700,margin:2}); res.send(buffer); }
   catch { res.status(500).end(); }
 });
+
 app.get("/api/admin/qr-links", requireAdmin, (req,res) => {
+  const baseUrl = getBaseUrl(req);
   res.json({
-    start:`${BASE_URL}/?start=1`,
-    qr:Array.from({length:10},(_,i)=>({number:i+1,url:`${BASE_URL}/?qr=${i+1}`}))
+    start:`${baseUrl}/?start=1`,
+    qr:Array.from({length:10},(_,i)=>({number:i+1,url:`${baseUrl}/?qr=${i+1}`}))
   });
 });
 
 app.get("*", (req,res) => res.sendFile(path.join(__dirname,"public","index.html")));
 
-app.listen(PORT, () => console.log(`QR Quiz Hunt running at ${BASE_URL}`));
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`QR Quiz Hunt running on port ${PORT}`);
+});
